@@ -4,4 +4,4 @@ A quick and straightforward framework to perform short-term forecasting when onl
 
 There is a Model class which provides a general framework to specify a function that describes case growth, fit the data, bootstrap confidence intervals, visualise forecasts, and assess performance through RMSE. It is very bare-bones as meant to be exploratory/a useful starting point for a more detailed analysis.
 
-Documenting is a little on the sparse side as I've been hit by a flu myself, so apologies if anything is unclear. The Trends Notebooks should outline how the class is used, however. Please do contact me for details if needed.
+I've uploaded it on request and just in case it's useful for anyone else trying to explore UK data. Documenting is a little on the sparse side as I've been hit by a flu myself, so apologies if anything is unclear. The Explore Notebooks should outline how the class is used, however. Please do contact me for details if needed.
