@@ -13,30 +13,45 @@ import re
 
 class Model():
     
-    def __init__(self, name, func):
+    def __init__(self, name, func, par0=None, parupper=None, parlower=None):
         
         self.name = name
         self.func = func # function describing change in total cases as a function of (t, params, init conditions)
         
+        self.par0 = par0
+        self.parbounds = (parlower, parupper)
+                
     def load(self, data, pop, city):
         
         self.raw_data = data # data should be a pandas df with columns Date and TotalCases
         self.pop = pop
         self.city = city
         
-        # remove cases where incidence falls
-        
-        delta = data.TotalCases.diff()
-        data = data[delta>=0]
-        
         # remove pre-infection
         
         data = data[data.TotalCases>0]
         
-        # add incidence data
+        # remove cases where incidence falls
         
+        def monotonic(data):
+    
+            pmax = 0
+            keep = []
+
+            for i in range(len(data)):
+
+                keep.append(data[i]>=pmax)
+                pmax = max(pmax, data[i])
+
+            return keep
+        
+        keep = monotonic(data.TotalCases.values)
+        data = data[keep]
+
+        # add incidence data
+
         data['Incidence'] = data.TotalCases.diff()
-        data['Incidence'].iloc[0] = 1 # first case must have a positive incidence
+        data['Incidence'].iloc[0] = data['TotalCases'].iloc[0] # first case must have a positive incidence
 
         # track days since day 0
         
@@ -57,29 +72,50 @@ class Model():
             
         return p
     
-    def fit(self, par0, parlower, parupper):
+    def fit(self, par0 = None, parlower = None, parupper = None):
         
-        par0 = {key:self.popconvert(value) for (key,value) in par0.items()}
-        parlower = {key:self.popconvert(value) for (key,value) in parlower.items()}
-        parupper = {key:self.popconvert(value) for (key,value) in parupper.items()}
+        # If new parameter vectors provided, override the default params:
         
-        self.par0 = par0
-        self.parbounds = (parlower, parupper)
+        if par0:
+            self.par0 = par0
+        if parlower or parupper:
+            self.parbounds = (parlower, parupper)
+            
+        # Sense check data and parameters have actually been provided
         
         if self.data is None:
                 
             print("No data loaded to fit.")
             return None
         
+        if self.par0 is None:
+            
+            print("No parameters available.")
+            return None
+            
+        if self.parbounds is None:
+            
+            print("No parameter bounds available.")
+            return None
+        
+        # Realise the actual default parameters by subsituting in the population variables
+            
+        self.par0_actual = {key:self.popconvert(value) for (key,value) in self.par0.items()}
+        parlower = {key:self.popconvert(value) for (key,value) in self.parbounds[0].items()}
+        parupper = {key:self.popconvert(value) for (key,value) in self.parbounds[1].items()}
+        self.parbounds_actual = (parlower, parupper)
+        
+        # Fit the parameters
+        
         params, _ = opt.curve_fit(self.func,
                                  self.data.Time,
                                  self.data.TotalCases,
-                                 p0=list(par0.values()),
-                                 bounds=(list(parlower.values()),list(parupper.values())))
+                                 p0=list(self.par0_actual.values()),
+                                 bounds=(list(self.parbounds_actual[0].values()),list(self.parbounds_actual[1].values())))
         
-        self.params = dict(zip(par0.keys(),params))
+        self.params = dict(zip(self.par0_actual.keys(),params)) # best fit parameters
         
-    def fit_bootstrap(self, par0, parlower, parupper, S=100):
+    def fit_bootstrap(self, par0 = None, parlower = None, parupper = None, S=50):
         
         self.fit(par0, parlower, parupper)
         
@@ -105,8 +141,8 @@ class Model():
                 param_new, _ = opt.curve_fit(self.func,
                                  range(periods),
                                  new_cum,
-                                 p0=list(self.par0.values()),
-                                 bounds=(list(self.parbounds[0].values()),list(self.parbounds[1].values())))
+                                 p0=list(self.par0_actual.values()),
+                                 bounds=(list(self.parbounds_actual[0].values()),list(self.parbounds_actual[1].values())))
 
                 paramouts.append(param_new)
 
@@ -122,9 +158,9 @@ class Model():
         params_lower = pars_df.quantile(.25)
         params_upper = pars_df.quantile(.75)
         
-        self.params_sd = dict(zip(self.par0.keys(),params_sd))
-        self.params_lower = dict(zip(self.par0.keys(),params_lower))
-        self.params_upper = dict(zip(self.par0.keys(),params_upper))
+        self.params_sd = dict(zip(self.par0.keys(),params_sd)) # standard deviation for realised bootstrapped parameters
+        self.params_lower = dict(zip(self.par0.keys(),params_lower)) # lower bound for realised bootstrapped parameters
+        self.params_upper = dict(zip(self.par0.keys(),params_upper)) # upper bound for realised bootstrapped parameters
         
         
     def visualise(self, lookahead = 7, prediction = True, intervals = True):
@@ -163,8 +199,8 @@ class Model():
                     print("No confidence intervals fitted")
                     return None
                 
-                upper_params = {key:(min(self.params[key]+self.params_sd[key],self.parbounds[1][key])) for key in self.params.keys()}
-                lower_params = {key:(max(self.params[key]-self.params_sd[key],self.parbounds[0][key])) for key in self.params.keys()}
+                upper_params = {key:(min(self.params[key]+self.params_sd[key],self.parbounds_actual[1][key])) for key in self.params.keys()}
+                lower_params = {key:(max(self.params[key]-self.params_sd[key],self.parbounds_actual[0][key])) for key in self.params.keys()}
                 
                 
                 
@@ -205,8 +241,8 @@ class Model():
                     param_new, _ = opt.curve_fit(self.func,
                                          train.Time,
                                          train.TotalCases,
-                                         p0=list(self.par0.values()),
-                                         bounds=(list(self.parbounds[0].values()),list(self.parbounds[1].values())))
+                                         p0=list(self.par0_actual.values()),
+                                         bounds=(list(self.parbounds_actual[0].values()),list(self.parbounds_actual[1].values())))
 
                     params_dict = dict(zip(self.par0.keys(),param_new))
 
@@ -239,3 +275,80 @@ class Model():
         else:
             
             return rmses
+        
+class epidemic():
+    
+    def __init__(self, casedata, popdata):
+        
+        self.casedata = casedata
+        self.popdata = popdata
+        
+    def fit_target(self, target, model,
+                   intervals=False, visualise=False, assess=False, lookahead=7, inplace=True):
+        
+        try:
+            
+            pop = self.popdata.loc[self.popdata.Name == target,'Population'].iat[0]
+                        
+        except:
+            
+            print("Data not found for target city.")
+            return None
+        
+        data = self.casedata[self.casedata.Area == target][['Date','TotalCases']]
+        
+        if sum(data.TotalCases>0)<=7:
+            
+            print("Insufficient case data found for target city.")
+            return None
+        
+        model.load(data, pop=pop, city=target)
+        
+        if intervals:
+            model.fit_bootstrap(S=50)
+            if visualise:
+                model.visualise(lookahead=lookahead, intervals=True)
+            if assess:
+                model.assess(inplace=inplace)
+            if not inplace:
+                return model.params, model.params_sd
+        
+        else:
+            model.fit()
+            if visualise:
+                model.visualise(lookahead=lookahead, intervals=False)
+            if assess:
+                model.assess(inplace=inplace)
+            if not inplace:
+                return model.params
+        
+    def fit_all(self, model, verbose=True):
+        
+        target_codes = self.popdata.Code.values
+        self.popdata = pd.concat([self.popdata,pd.DataFrame(columns=list(model.par0.keys()))])
+        self.popdata['LatestTotalCases'] = np.nan
+        
+        for tc in target_codes:
+            
+            target = self.popdata.loc[self.popdata.Code == tc,'Name'].iat[0]
+            pop = self.popdata.loc[self.popdata.Code == tc,'Population'].iat[0]
+            data = self.casedata[self.casedata.AreaCode == tc][['Date','TotalCases']]
+            
+            if sum(data.TotalCases>0)<=7:
+                continue
+            
+            data = data.sort_values(by=['Date'], ascending = True)
+            self.popdata.loc[self.popdata.Code==tc, 'LatestTotalCases'] = data.TotalCases.values[-1]
+            
+            model.load(data, pop, target)
+            
+            try:
+                model.fit()
+                self.popdata.loc[self.popdata.Code==tc, model.params.keys()] = model.params.values()
+                if verbose:
+                    print(target, model.params)
+        
+            except BaseException as e:
+                print("Fit failed for "+target+"due to the following error:\n"+str(e))
+                continue
+        
