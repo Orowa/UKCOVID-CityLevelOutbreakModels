@@ -188,26 +188,38 @@ class Model():
                 print("Not enough data to assess forecast of "+str(lookahead)+" periods")
                 continue
 
-            target_dates = self.data.Date.iloc[7:(-lookahead)]
+            target_dates = self.data.Date.iloc[7:(-lookahead)].values
             targets = self.data.TotalCases.iloc[7:(-lookahead)].values
+            
             preds = []
-
-            for t in target_dates:
-
+            final_targets = []
+            
+            for i in range(len(target_dates)):
+                
+                t = target_dates[i]
+                
                 train = self.data[self.data.Date < t]
+                
+                try:
+                
+                    param_new, _ = opt.curve_fit(self.func,
+                                         train.Time,
+                                         train.TotalCases,
+                                         p0=list(self.par0.values()),
+                                         bounds=(list(self.parbounds[0].values()),list(self.parbounds[1].values())))
 
-                param_new, _ = opt.curve_fit(self.func,
-                                     train.Time,
-                                     train.TotalCases,
-                                     p0=list(self.par0.values()),
-                                     bounds=(list(self.parbounds[0].values()),list(self.parbounds[1].values())))
+                    params_dict = dict(zip(self.par0.keys(),param_new))
 
-                params_dict = dict(zip(self.par0.keys(),param_new))
+                    predict = self.func(range(train.Time.iloc[-1]+lookahead+1),**params_dict)
+                    
+                    preds.append(predict[-1])
+                    final_targets.append(targets[i])
+                
+                except:
+                    
+                    continue
 
-                predict = self.func(range(train.Time.iloc[-1]+lookahead+1),**params_dict)
-                preds.append(predict[-1])
-
-            rmse = np.sqrt(np.mean((np.array(preds)-targets)**2))
+            rmse = np.sqrt(np.mean((np.array(preds)-np.array(final_targets))**2))
             rmses.append(rmse)
 
         if visualise:
