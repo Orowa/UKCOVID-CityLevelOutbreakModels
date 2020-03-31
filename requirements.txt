@@ -1,7 +1,6 @@
 # This file may be used to create an environment using:
 # $ conda create --name <env> --file <this file>
 # platform: linux-64
-chart-studio=1.0.0=pypi_0
 cufflinks=0.17.3=pypi_0
 decorator=4.4.2=py_0
 entrypoints=0.3=py38_0
