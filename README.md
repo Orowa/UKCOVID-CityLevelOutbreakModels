@@ -20,3 +20,7 @@ There is a Model class which provides a general framework to specify a function 
 There is an Epidemic class of UK-level case data as well as population meta-data, with some methods to make it easier to fit models across all cities.
 
 I've uploaded it on request and just in case it's useful for anyone else trying to explore UK data. Documenting is a little on the sparse side as I've been hit by a flu myself, so apologies if anything is unclear. Please do contact me for details if needed.
+
+Binder to play with a few interactive plots using parameters cached on 31/03/20.
+
+[![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/Orowa/UKCOVID-CityLevelOutbreakModels/master?filepath=UK%20City%20Level%20Outbreak%20Comparison%20-%20Interactive%20(Cached).ipynb)
