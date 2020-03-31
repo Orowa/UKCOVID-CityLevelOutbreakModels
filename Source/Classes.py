@@ -61,6 +61,7 @@ class Model():
         # save cleaned data
         
         self.data = data
+        self.C_0 = data.TotalCases.iloc[0]
     
     def popconvert(self, p):
         
@@ -108,10 +109,10 @@ class Model():
         # Fit the parameters
         
         params, _ = opt.curve_fit(self.func,
-                                 self.data.Time,
-                                 self.data.TotalCases,
-                                 p0=list(self.par0_actual.values()),
-                                 bounds=(list(self.parbounds_actual[0].values()),list(self.parbounds_actual[1].values())))
+                                  self.data.Time,
+                                  self.data.TotalCases,
+                                  p0=list(self.par0_actual.values()),
+                                  bounds=(list(self.parbounds_actual[0].values()),list(self.parbounds_actual[1].values())))
         
         self.params = dict(zip(self.par0_actual.keys(),params)) # best fit parameters
         
@@ -163,7 +164,7 @@ class Model():
         self.params_upper = dict(zip(self.par0.keys(),params_upper)) # upper bound for realised bootstrapped parameters
         
         
-    def visualise(self, lookahead = 7, prediction = True, intervals = True):
+    def visualise(self, lookahead = 7, prediction = True, intervals = True, intervalinit = False):
         
         fig = self.data.iplot(x='Date', y='TotalCases',
                  mode = 'lines+markers',
@@ -175,7 +176,6 @@ class Model():
         
         fig.add_trace(go.Bar(x=self.data.Date, y=self.data.Incidence, name='DailyIncidents'))
 
-        
         if prediction:
             
             if self.params is None:
@@ -198,18 +198,38 @@ class Model():
                     
                     print("No confidence intervals fitted")
                     return None
+               
+
+                # calculate the upper and lower parameter estimates, ensuring they are bounded appropriately by the starting bounds on the pars
+
+                parlower = {key:self.popconvert(value) for (key,value) in self.parbounds[0].items()}
+                parupper = {key:self.popconvert(value) for (key,value) in self.parbounds[1].items()}
+                self.parbounds_actual = (parlower, parupper)
                 
                 upper_params = {key:(min(self.params[key]+self.params_sd[key],self.parbounds_actual[1][key])) for key in self.params.keys()}
                 lower_params = {key:(max(self.params[key]-self.params_sd[key],self.parbounds_actual[0][key])) for key in self.params.keys()}
                 
-                
-                
-                best_fit_upper = self.func(range(periods), **upper_params)
-                best_fit_lower = self.func(range(periods), **lower_params)
-                
-                fig.add_trace(go.Scatter(x=dates, y=best_fit_upper, line=dict(color="green", dash="dash"), name='EstTotalCases ('+self.name+', upper)'))
-                fig.add_trace(go.Scatter(x=dates, y=best_fit_lower, line=dict(color="green", dash="dash"), name='EstTotalCases ('+self.name+', lower)'))
+                if intervalinit:
+                    
+                    # fit the confidence intervals starting from day 1 of the outbreak
 
+                    best_fit_upper = self.func(range(periods), **upper_params)
+                    best_fit_lower = self.func(range(periods), **lower_params)
+                
+                    fig.add_trace(go.Scatter(x=dates, y=best_fit_upper, line=dict(color="green", dash="dash"), name='EstTotalCases ('+self.name+', upper)'))
+                    fig.add_trace(go.Scatter(x=dates, y=best_fit_lower, line=dict(color="green", dash="dash"), name='EstTotalCases ('+self.name+', lower)'))
+
+                else:
+                        
+                    C_t_est = best_fit[self.data.Time.iloc[-1]]
+
+                    best_fit_upper = self.func(range(lookahead+1), **upper_params, C_0 = C_t_est) # mini hack - assumes the iniitial conditions for the dynamics function are called C_0
+                    best_fit_lower = self.func(range(lookahead+1), **lower_params, C_0 = C_t_est)
+
+                    dates = pd.date_range(start=self.data.Date.iloc[-1], periods=lookahead)
+
+                    fig.add_trace(go.Scatter(x=dates, y=best_fit_upper, line=dict(color="green", dash="dash"), name='EstTotalCases ('+self.name+', upper)'))
+                    fig.add_trace(go.Scatter(x=dates, y=best_fit_lower, line=dict(color="green", dash="dash"), name='EstTotalCases ('+self.name+', lower)'))
 
         fig.show()
         
@@ -297,42 +317,115 @@ class epidemic():
         
         data = self.casedata[self.casedata.Area == target][['Date','TotalCases']]
         
-        if sum(data.TotalCases>0)<=7:
+        casedata = sum(data.TotalCases>0)
+        
+        if casedata<=7:
             
-            print("Insufficient case data found for target city.")
+            print("Insufficient case data found for "+target+". Days with available case data = "+str(casedata)+".")
             return None
+        
+        print("Data found for "+target+", processing.")
         
         model.load(data, pop=pop, city=target)
         
         if intervals:
-            model.fit_bootstrap(S=50)
+            if self.all_fitted_bootstrap:
+                parnames = list(model.par0.keys())
+                parnames_se = [x + '_se' for x in parnames]
+                params = self.popdata.loc[self.popdata.Name == target, parnames].values[0]
+                params_sd = self.popdata.loc[self.popdata.Name == target, parnames_se].values[0]
+                model.params = dict(zip(parnames,params))
+                model.params_sd = dict(zip(parnames, params_sd))
+            else:    
+                print("Bootstrapping. This may take some time.")
+                model.fit_bootstrap(S=50)
             if visualise:
                 model.visualise(lookahead=lookahead, intervals=True)
             if assess:
+                if self.all_fitted_bootstrap:
+                    # hack: the assess method needs the fit to have run beforehand to set the bound.
+                    # todo: fix assess method to work with cache data
+                    model.fit()
                 model.assess(inplace=inplace)
             if not inplace:
                 return model.params, model.params_sd
         
         else:
-            model.fit()
+            if self.all_fitted:
+                parnames = list(model.par0.keys())
+                params = self.popdata.loc[self.popdata.Name == target, parnames].values[0]
+                model.params = dict(zip(model.par0.keys(),params))
+            else:
+                model.fit()
             if visualise:
                 model.visualise(lookahead=lookahead, intervals=False)
             if assess:
+                if self.all_fitted:
+                    # hack: the assess method needs the fit to have run beforehand to set the bound.
+                    # todo: fix assess method to work with cache data
+                    model.fit()
                 model.assess(inplace=inplace)
             if not inplace:
                 return model.params
         
-    def fit_all(self, model, verbose=True):
+#    def fit_all(self, model, verbose=True):
+#        
+#        target_codes = self.popdata.Code.values
+#        self.popdata = pd.concat([self.popdata,pd.DataFrame(columns=list(model.par0.keys()))])
+#        self.popdata['LatestTotalCases'] = np.nan
+#        
+#        for tc in target_codes:
+#            
+#            target = self.popdata.loc[self.popdata.Code == tc,'Name'].iat[0]
+#            pop = self.popdata.loc[self.popdata.Code == tc,'Population'].iat[0]
+#            data = self.casedata[self.casedata.AreaCode == tc][['Date','TotalCases']]
+#            
+#            if sum(data.TotalCases>0)<=7:
+#                continue
+#            
+#            data = data.sort_values(by=['Date'], ascending = True)
+#            self.popdata.loc[self.popdata.Code==tc, 'LatestTotalCases'] = data.TotalCases.values[-1]
+#            
+#            model.load(data, pop, target)
+#            
+#            try:
+#                model.fit()
+#                self.popdata.loc[self.popdata.Code==tc, model.params.keys()] = model.params.values()
+#                if verbose:
+#                    print(target, model.params)
+#        
+#            except BaseException as e:
+#                print("Fit failed for "+target+"due to the following error:\n"+str(e))
+#                continue
+        
+    def fit_all(self, model, verbose=True, bootstrap=False, dropna=True):
         
         target_codes = self.popdata.Code.values
-        self.popdata = pd.concat([self.popdata,pd.DataFrame(columns=list(model.par0.keys()))])
+        parnames = list(model.par0.keys())
+        parnames_se = [x + '_se' for x in parnames]
+        self.popdata = pd.concat([self.popdata,pd.DataFrame(columns=parnames+parnames_se)])
         self.popdata['LatestTotalCases'] = np.nan
+        
+        totalcases = len(target_codes)
+        
+        if verbose:
+        
+            print("Total cities to attempt: "+str(totalcases))
+        
+        attempts = 0
+        successes = 0
         
         for tc in target_codes:
             
             target = self.popdata.loc[self.popdata.Code == tc,'Name'].iat[0]
             pop = self.popdata.loc[self.popdata.Code == tc,'Population'].iat[0]
             data = self.casedata[self.casedata.AreaCode == tc][['Date','TotalCases']]
+            
+            attempts += 1
+            
+            if verbose:
+                if attempts%10 == 0:
+                    print("Attempted fits: "+str(attempts)+", successes: "+str(successes))
             
             if sum(data.TotalCases>0)<=7:
                 continue
@@ -343,12 +436,26 @@ class epidemic():
             model.load(data, pop, target)
             
             try:
-                model.fit()
-                self.popdata.loc[self.popdata.Code==tc, model.params.keys()] = model.params.values()
-                if verbose:
-                    print(target, model.params)
+                
+                if bootstrap:
+                    model.fit_bootstrap(S=25)
+                    self.popdata.loc[self.popdata.Code==tc, parnames] = model.params.values()
+                    self.popdata.loc[self.popdata.Code==tc, parnames_se] = model.params_sd.values()
+                else:
+                    model.fit()
+                    self.popdata.loc[self.popdata.Code==tc, model.params.keys()] = model.params.values()
+                
+                successes += 1
         
             except BaseException as e:
                 print("Fit failed for "+target+"due to the following error:\n"+str(e))
                 continue
+        
+        if dropna:
+        
+            self.popdata.dropna(inplace=True)
+        
+        self.all_fitted = True
+        if bootstrap:
+            self.all_fitted_bootstrap = True
         
